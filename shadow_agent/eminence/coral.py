@@ -1,9 +1,17 @@
 """The CORAL Permission Wall -- human-in-the-loop enforcement.
 
-Provenance note: no repository named CORAL was located on GitHub during the
-assimilation pass. This module implements the protocol **as specified in the
-directive**, not as extracted from a source project. Saying so is cheaper than
-inventing a lineage for it.
+Name disambiguation -- read this before assuming provenance
+-----------------------------------------------------------
+This module is **not** derived from ``Human-Agent-Society/CORAL``. That
+repository is real (Apache-2.0, COLM 2026) and this project does assimilate
+from it -- but into :mod:`shadow_agent.eminence.failure` and
+:mod:`shadow_agent.core.atomic`, not here. CORAL is a multi-agent evolutionary
+autoresearch orchestrator; it has no permission wall.
+
+The name on this file comes from this project's own directive, which used
+"CORAL" for the human-in-the-loop protocol. It is kept for continuity with
+that vocabulary. The protocol below is implemented from that specification.
+See ``NOTICE.md`` for the full accounting.
 
 What this adds that the policy could not
 ----------------------------------------

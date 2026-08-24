@@ -127,12 +127,15 @@ class CredentialStore:
         payload = dict(self._read())
         payload.update({"api_key": api_key, "note": note, "version": 1})
 
-        tmp = self.path.with_suffix(".tmp")
-        tmp.touch(mode=0o600, exist_ok=True)
-        self.hardened = harden(tmp)
-        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(self.path)
-        self.hardened = harden(self.path) and (self.hardened is not False)
+        from ..core.atomic import write_json_atomic
+
+        # `mode` is applied to the temp file *before* the rename, so the key is
+        # never briefly visible under its real name with the default umask.
+        # The bytes are fsynced before the rename too — a credentials file whose
+        # contents never landed is worse than no file, because the next read
+        # returns an empty key and the user is told their credential is invalid.
+        write_json_atomic(self.path, payload, mode=0o600, sync_dir=True)
+        self.hardened = harden(self.path)
         return self.path
 
     def clear(self) -> bool:

@@ -96,6 +96,11 @@ Answers: `y` once · `a` always (this exact command **in this directory**) ·
 `n` abort · `q` abandon the run. A bare Enter means abort — a reflex-approved
 prompt protects nobody.
 
+> The module is named `coral.py` after this project's directive terminology.
+> It is **not** derived from [Human-Agent-Society/CORAL](https://github.com/Human-Agent-Society/CORAL),
+> which is a multi-agent research orchestrator. That project contributed
+> elsewhere — see [NOTICE.md](NOTICE.md).
+
 Headless (`SHADOW_HEADLESS`): `deny` (default) · `allow` (trusted automation
 only) · `error` (fail a pipeline loudly). A question nobody can answer is not
 a safety mechanism, so the wall never silently proceeds because the prompt
@@ -265,12 +270,12 @@ derivation, is in [NOTICE.md](NOTICE.md).
 | [666ghj/MiroFish](https://github.com/666ghj/MiroFish) | **AGPL-3.0** | Read only — backoff-with-jitter written independently |
 | [MemoriLabs/Memori](https://github.com/MemoriLabs/Memori) | **non-standard** | Read only — two-stage recall written independently |
 | [ANative-Lab/EvoAgentX](https://github.com/ANative-Lab/EvoAgentX) | **non-standard** | Read only — self-evolution framing, no code derived |
-| CORAL | *not found* | No such repository was located; the permission protocol is implemented from the directive |
+| [Human-Agent-Society/CORAL](https://github.com/Human-Agent-Society/CORAL) | Apache-2.0 | Exit-quality classification · circuit-breaker rule · durable `fsync`-before-rename writes |
 
 ## Development
 
 ```bash
-python -m unittest discover -s tests -v     # 98 tests
+python -m unittest discover -s tests -v     # 118 tests
 ruff check shadow_agent
 ```
 

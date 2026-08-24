@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from ..config import Config, STATE_DIRNAME, config_path_for, state_dir_for
+from ..core.atomic import write_json_atomic
 from ..core.errors import ArchitectError
 
 GITIGNORE_BODY = """\

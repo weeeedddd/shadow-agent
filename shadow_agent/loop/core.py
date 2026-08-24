@@ -65,7 +65,7 @@ from ..core.context import SystemState
 from ..core.errors import EminenceError, ShadowError
 from ..eminence.coral import Action, ActionKind, Decision, PermissionDenied, PermissionWall, action_for_command
 from ..eminence.executor import Eminence, ExecutionResult
-from ..eminence.failure import StreakTracker
+from ..eminence.failure import CircuitBreaker, ExitQuality, StreakTracker, classify_exit
 from ..monarch.analyzer import Directive, Monarch
 
 DEFAULT_MAX_STEPS = 12
@@ -131,6 +131,7 @@ class RunResult:
     failed: int = 0
     aborted: bool = False
     abort_reason: str = ""
+    unproductive: int = 0   # exit 0, but instant and silent
     checkpoint: Optional[str] = None
     skill_forged: Optional[str] = None
     nudges: List[str] = field(default_factory=list)
@@ -138,7 +139,18 @@ class RunResult:
 
     @property
     def succeeded(self) -> bool:
-        return not self.aborted and self.failed == 0 and self.executed > 0
+        """Executed real work, and nothing failed or aborted.
+
+        ``unproductive`` is excluded deliberately: a step that exited 0 with
+        no output and no elapsed time is not evidence of success, and a run
+        made entirely of those has not earned a forged skill.
+        """
+        return (
+            not self.aborted
+            and self.failed == 0
+            and self.executed > 0
+            and self.executed > self.unproductive
+        )
 
 
 class Planner(Protocol):
@@ -223,6 +235,7 @@ class CoreLoop:
         self.planner = planner or HeuristicPlanner()
         self.hooks = hooks or Hooks()
         self.streak = StreakTracker()
+        self.breaker = CircuitBreaker()
         self.max_steps = max_steps
 
     # --- the run -------------------------------------------------------------
@@ -319,12 +332,27 @@ class CoreLoop:
             result.outcomes.append(outcome)
 
             execution: Optional[ExecutionResult] = outcome.data
+
+            # Exit 0 is not the same as success. A command that returns
+            # instantly with no output almost certainly did nothing, and
+            # counting it as a win is how a run reports "1 executed, 0 failed"
+            # while accomplishing nothing.
+            quality = (
+                classify_exit(execution.returncode, execution.duration, execution.output)
+                if execution
+                else ExitQuality.SESSION_ERROR
+            )
+
             if outcome.ok:
                 result.executed += 1
+                if quality is ExitQuality.NO_RESULT:
+                    result.unproductive += 1
+                suffix = "" if quality is ExitQuality.CLEAN else "  (no output — did it do anything?)"
                 yield LoopEvent(
                     Phase.EXECUTE,
-                    f"step {index} ok ({execution.duration:.2f}s)" if execution else f"step {index} ok",
+                    (f"step {index} ok ({execution.duration:.2f}s)" if execution else f"step {index} ok") + suffix,
                     execution.brief() if execution else "",
+                    ok=quality is ExitQuality.CLEAN,
                     step_index=index,
                 )
             else:
@@ -342,6 +370,15 @@ class CoreLoop:
             if nudge:
                 result.nudges.append(nudge)
                 yield LoopEvent(Phase.EXECUTE, "loop-break nudge", nudge, ok=False, step_index=index)
+
+            # Circuit breaker. Only non-productive exits count -- a clean
+            # exit resets it, so a run of legitimate quick completions can
+            # never trip a mechanism meant to catch a crash loop.
+            if self.breaker.record(quality):
+                result.aborted = True
+                result.abort_reason = self.breaker.reason
+                yield LoopEvent(Phase.EXECUTE, "circuit breaker tripped", self.breaker.reason, ok=False, step_index=index)
+                break
 
             self.hooks.fire("after_step", step, outcome)
 

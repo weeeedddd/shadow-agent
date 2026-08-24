@@ -118,13 +118,15 @@ class Config:
         )
 
     def save(self, path: Path) -> Path:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(payload, encoding="utf-8")
-        tmp.replace(path)  # atomic: never leave a half-written config
-        return path
+        """Write the config durably.
+
+        The previous write-then-replace was atomic but not durable: a crash
+        could leave the directory entry pointing at contents that never
+        reached the disk. :func:`write_json_atomic` fsyncs first.
+        """
+        from .core.atomic import write_json_atomic
+
+        return write_json_atomic(Path(path), self.to_dict())
 
     @classmethod
     def load(cls, path: Path) -> "Config":

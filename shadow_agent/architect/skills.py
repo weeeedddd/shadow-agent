@@ -202,15 +202,13 @@ class SkillForge:
             return None
 
     def save(self, skill: Skill) -> Optional[Path]:
-        """Write a skill atomically. The directory name is path-sanitised."""
+        """Write a skill durably. The directory name is path-sanitised."""
+        from ..core.atomic import write_atomic
+
         directory = self.dir / sanitize_segment(skill.name, fallback="skill")
         try:
             directory.mkdir(parents=True, exist_ok=True)
-            path = directory / SKILL_FILENAME
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(skill.to_markdown(), encoding="utf-8", newline="\n")
-            tmp.replace(path)
-            return path
+            return write_atomic(directory / SKILL_FILENAME, skill.to_markdown())
         except OSError:
             return None
 

@@ -45,6 +45,28 @@ MIT.
 |---|---|---|
 | `agent_loop.py` | `shadow_agent/loop/core.py` | The `StepOutcome(data, next_prompt, should_exit)` contract; hook points around every phase; a hard turn bound; and generator-yielded progress, so a long run is observably working rather than indistinguishable from a hang. |
 
+### Human-Agent-Society/CORAL — https://github.com/Human-Agent-Society/CORAL
+Apache License 2.0.
+
+**Correction.** An earlier revision of this file recorded CORAL as "not found".
+That was wrong — the search during the assimilation pass missed it, and the
+repository is real: an open-source autoresearch system built on autonomous
+coding agents, accepted at COLM 2026.
+
+It is also **not what our `eminence/coral.py` implements.** That module is a
+human-in-the-loop permission wall, named for the terminology in this project's
+own directive. CORAL is a multi-agent evolutionary research orchestrator with
+grading, shared knowledge, and island-model evolution. The two have nothing to
+do with each other, and the module name is retained only for continuity with
+the directive. What CORAL actually contributed is below.
+
+| Their file | Our module | What was taken |
+|---|---|---|
+| `coral/agent/exit_classifier.py` | `shadow_agent/eminence/failure.py` | **Exit 0 is not the same as success.** A process that returns instantly with no output probably did nothing. Also the circuit-breaker rule that only non-productive exits may count toward a burst — counting clean completions turns a safety mechanism into a bug that stops a working agent. |
+| `coral/hub/auto_stop.py` | `shadow_agent/core/atomic.py` | Durable atomic write: `fsync` the temp file **before** the rename, and create it in the destination directory because `os.replace` across filesystems is not atomic. This fixed a real defect here — every atomic write in this framework was atomic but not durable. |
+| `coral/hub/_island.py` | — | Read for the island-model design and its path-safety validation. Not adopted: this framework runs one agent, and an island model without a population is ceremony. |
+| `coral/hub/skills.py` | — | Independent confirmation of the `skills/<name>/SKILL.md` + frontmatter layout we had already built from AutoResearchClaw. They parse YAML frontmatter; ours is JSON, to stay dependency-free. |
+
 ### aiming-lab/AutoResearchClaw — https://github.com/aiming-lab/AutoResearchClaw
 MIT.
 
@@ -86,12 +108,6 @@ Memori code is present in this repository.
 Read for the self-evolution framing — that an agent should abstract solved
 problems into reusable capability. `shadow_agent/architect/skills.py` is
 written from scratch. No EvoAgentX code is present in this repository.
-
-### CORAL — not found
-No repository by that name was located during the assimilation pass. The
-permission-wall protocol in `shadow_agent/eminence/coral.py` is implemented
-from the specification given in the project directive, not extracted from a
-source project. The name is retained because the directive uses it.
 
 ---
 

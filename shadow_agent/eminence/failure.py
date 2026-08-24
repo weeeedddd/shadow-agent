@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Dict, Optional, Tuple
 
 # Markers of a failure a plain retry would likely clear. These must NOT count
@@ -44,6 +45,92 @@ EMPTY_SUCCESS_MARKERS = (
 _EXIT_CODE = re.compile(r"exit code:\s*(-?\d+)", re.IGNORECASE)
 
 DEFAULT_STREAK_THRESHOLD = 3
+
+# --- exit quality -------------------------------------------------------------
+# Assimilated from Human-Agent-Society/CORAL (coral/agent/exit_classifier.py,
+# Apache-2.0).
+
+MIN_CLEAN_RUNTIME_SECONDS = 0.05
+DEFAULT_BURST_THRESHOLD = 4
+
+
+class ExitQuality(Enum):
+    """How much to believe an exit code.
+
+    CORAL's insight, and the gap it exposed here: **exit 0 is not the same as
+    success.** A process that exits 0 in a millisecond, having produced no
+    output, almost certainly did nothing -- a missing binary swallowed by a
+    shell, a no-op guard, a command that silently skipped its own work. This
+    framework previously counted every zero exit as a clean success, which
+    meant a run could report "1 executed, 0 failed" while accomplishing
+    nothing at all.
+
+    The distinction also protects the circuit breaker from the opposite error.
+    Only ``NO_RESULT`` and ``SESSION_ERROR`` count toward a crash burst; a
+    ``CLEAN`` exit must never increment it, or a run of legitimate quick
+    completions trips the breaker and stops a working agent.
+    """
+
+    CLEAN = "clean"                  # exit 0, ran long enough, produced something
+    NO_RESULT = "no_result"          # exit 0 but instant and silent: suspect
+    SESSION_ERROR = "session_error"  # non-zero, timeout, or refusal
+
+
+def classify_exit(
+    exit_code: Optional[int],
+    duration: Optional[float] = None,
+    output: str = "",
+    min_clean_runtime: float = MIN_CLEAN_RUNTIME_SECONDS,
+) -> ExitQuality:
+    """Judge the quality of a completed execution.
+
+    Conservative by design: ``CLEAN`` requires exit 0 **and** evidence of work
+    -- either output, or enough elapsed time to believe something happened.
+    Evidence of output outranks the timing heuristic, because a genuinely fast
+    command that printed a result did its job.
+    """
+    if exit_code is None or exit_code != 0:
+        return ExitQuality.SESSION_ERROR
+    if output and output.strip():
+        return ExitQuality.CLEAN
+    if duration is not None and duration >= min_clean_runtime:
+        return ExitQuality.CLEAN
+    return ExitQuality.NO_RESULT
+
+
+@dataclass
+class CircuitBreaker:
+    """Trips after consecutive non-clean exits, so a crash loop stops itself.
+
+    From CORAL: the breaker counts *only* ``NO_RESULT`` and ``SESSION_ERROR``.
+    A clean exit resets it. Counting clean completions would turn a productive
+    run into a false trip, which is how a safety mechanism becomes a bug.
+    """
+
+    threshold: int = DEFAULT_BURST_THRESHOLD
+    consecutive: int = 0
+    tripped: bool = False
+    reason: str = ""
+
+    def record(self, quality: "ExitQuality") -> bool:
+        """Record one exit. Returns True when the breaker has tripped."""
+        if quality is ExitQuality.CLEAN:
+            self.consecutive = 0
+            return self.tripped
+
+        self.consecutive += 1
+        if self.consecutive >= self.threshold and not self.tripped:
+            self.tripped = True
+            self.reason = (
+                f"{self.consecutive} consecutive non-productive exits "
+                f"({quality.value}); halting before the loop burns the run"
+            )
+        return self.tripped
+
+    def reset(self) -> None:
+        self.consecutive = 0
+        self.tripped = False
+        self.reason = ""
 
 
 def failure_class(text: str) -> str:
