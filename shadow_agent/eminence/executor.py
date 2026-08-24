@@ -102,19 +102,47 @@ def inspect_command(command: str) -> Optional[str]:
 
 
 def default_shell() -> List[str]:
-    """The shell invocation for this platform.
+    """The shell invocation for this platform, verified to exist.
 
-    On Windows a POSIX shell is preferred when one is present -- Git Bash ships
-    with Git -- because the command vocabulary the framework generates is
-    POSIX. It falls back to ``cmd.exe`` rather than assuming.
+    Resolution order and why:
+
+    1. ``SHADOW_SHELL`` -- an explicit override always wins.
+    2. On POSIX, ``$SHELL`` **if it actually exists on disk.** An inherited
+       ``SHELL`` pointing at a shell this machine does not have is a common
+       container artefact, and trusting it blindly turns every command into
+       ``FileNotFoundError``.
+    3. On Windows, a POSIX shell when one is present -- Git ships one, and the
+       command vocabulary this framework generates is POSIX.
+    4. ``cmd.exe`` as the floor, located through ``COMSPEC`` and verified.
+
+    Every candidate is confirmed with ``shutil.which`` or ``Path.is_file()``
+    before being returned, so this never hands back an unrunnable path.
     """
+    override = os.environ.get("SHADOW_SHELL")
+    if override:
+        resolved = shutil.which(override) or (str(Path(override)) if Path(override).is_file() else None)
+        if resolved:
+            return [resolved, "-c"] if os.name != "nt" or "cmd" not in Path(resolved).name.lower() else [resolved, "/c"]
+
     if os.name != "nt":
-        return [os.environ.get("SHELL") or "/bin/sh", "-c"]
-    for candidate in ("bash", "sh"):
-        found = shutil.which(candidate)
+        candidate = os.environ.get("SHELL")
+        if candidate and Path(candidate).is_file():
+            return [candidate, "-c"]
+        for name in ("bash", "sh", "dash", "zsh"):
+            found = shutil.which(name)
+            if found:
+                return [found, "-c"]
+        return ["/bin/sh", "-c"]  # POSIX guarantees this path
+
+    for name in ("bash", "sh"):
+        found = shutil.which(name)
         if found:
             return [found, "-c"]
-    return [os.environ.get("COMSPEC") or "cmd.exe", "/c"]
+
+    comspec = os.environ.get("COMSPEC")
+    if comspec and Path(comspec).is_file():
+        return [comspec, "/c"]
+    return [shutil.which("cmd") or "cmd.exe", "/c"]
 
 
 class Eminence:

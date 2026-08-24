@@ -172,30 +172,88 @@ def _os_label() -> str:
 
 
 def _linux_pretty_name() -> Optional[str]:
-    try:
-        with open("/etc/os-release", encoding="utf-8") as handle:
-            for line in handle:
+    """Distro name from os-release, checked in both standard locations.
+
+    ``/etc/os-release`` is the usual path but the spec places the vendor copy
+    at ``/usr/lib/os-release``; an immutable-root distro may only have the
+    latter. Both are read through ``pathlib`` so a directory, a dangling
+    symlink, or a permission error is a miss rather than an exception.
+    """
+    for candidate in (Path("/etc/os-release"), Path("/usr/lib/os-release")):
+        try:
+            if not candidate.is_file():
+                continue
+            for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines():
                 if line.startswith("PRETTY_NAME="):
                     return line.split("=", 1)[1].strip().strip('"')
-    except OSError:
-        return None
+        except OSError:
+            continue
     return None
 
 
+def _container_hint() -> str:
+    """Detect WSL / container / SSH, each of which changes what is possible.
+
+    Not cosmetic. Under WSL a Windows path resolves but Windows tooling does
+    not; in a container there is no browser for an OAuth flow to open; over
+    SSH there may be no display at all. The auth wizard and the permission
+    wall both need to know.
+    """
+    try:
+        if Path("/proc/sys/kernel/osrelease").is_file():
+            release = Path("/proc/sys/kernel/osrelease").read_text(
+                encoding="utf-8", errors="replace"
+            ).lower()
+            if "microsoft" in release or "wsl" in release:
+                return "WSL"
+    except OSError:
+        pass
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return "WSL"
+    try:
+        if Path("/.dockerenv").exists():
+            return "container"
+    except OSError:
+        pass
+    if os.environ.get("KUBERNETES_SERVICE_HOST"):
+        return "container"
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return "ssh"
+    if os.environ.get("CI"):
+        return "CI"
+    return ""
+
+
 def _shell_label() -> str:
-    """Identify the shell hosting this process, as far as it can be known."""
+    """Identify the shell hosting this process, as far as it can be known.
+
+    Ordered most-specific first. ``MSYSTEM`` is checked before ``SHELL``
+    because Git Bash sets both, and reporting a bare ``bash`` on Windows hides
+    the distinction that actually matters for path handling.
+    """
     msystem = os.environ.get("MSYSTEM")
     if msystem:
         return f"{msystem} (Git Bash)"
+
     shell = os.environ.get("SHELL")
     if shell:
-        return Path(shell).name
+        try:
+            return Path(shell).name or shell
+        except (OSError, ValueError):
+            return shell
+
     if os.name == "nt":
+        # PSModulePath is set by PowerShell but is also inherited by child
+        # processes it spawns, so it proves an ancestor, not this shell.
+        # Report it as such rather than overclaiming.
         if os.environ.get("PSModulePath"):
-            return "PowerShell"
+            return "PowerShell (inherited)"
         comspec = os.environ.get("COMSPEC")
         if comspec:
-            return Path(comspec).name
+            try:
+                return Path(comspec).name
+            except (OSError, ValueError):
+                return comspec
     return "unknown"
 
 
@@ -219,6 +277,7 @@ class SystemState:
     state_dir: str
     state_dir_exists: bool
     git: GitState
+    environment: str = ""  # WSL / container / ssh / CI, when detected
     captured_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
     def display_cwd(self, max_width: int = 44) -> str:
@@ -271,4 +330,5 @@ def collect(cwd: Optional[Path] = None, state_dir: Optional[Path] = None) -> Sys
         state_dir=str(state_dir),
         state_dir_exists=state_dir.is_dir(),
         git=collect_git(cwd),
+        environment=_container_hint(),
     )

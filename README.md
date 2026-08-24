@@ -57,6 +57,61 @@ shadow rollback <id>     restore a snapshot
 shadow memory            inspect or edit durable memory
 ```
 
+Or run without installing:
+
+```bash
+python main.py                  boot, authenticate, idle
+python main.py "your request"   boot and run one request through the loop
+python main.py --no-auth        boot without touching credentials
+```
+
+### The core loop
+
+```
+raw input → MONARCH → CORAL WALL → EMINENCE → ARCHITECT
+            analyse    gate         execute    journal · checkpoint · forge · gc
+```
+
+Bounded by `max_steps` and by a failure-streak breaker. `CoreLoop.stream()`
+yields an event per phase so the terminal renders progress live rather than
+freezing until the run ends.
+
+The planner is pluggable. The default is heuristic and maps a small set of
+recognisable requests to commands — **it does not invent shell commands from
+prose; that needs the reasoning core.** Everything else in the loop is real
+and runs offline today.
+
+### The CORAL permission wall
+
+Every shell command and file write routes through the wall. There is no path
+from the Eminence to the OS that bypasses it.
+
+| Tier | Behaviour |
+|---|---|
+| **DENY** | Refused outright. Not promptable in any mode — `paranoid`, an `always` entry, and a scripted `y` all fail to unlock it. |
+| **APPROVE** | The operator is asked, and the exact command is shown. |
+| **ALLOW** | Proceeds, still recorded. `SHADOW_PARANOID=1` escalates these to prompts. |
+
+Answers: `y` once · `a` always (this exact command **in this directory**) ·
+`n` abort · `q` abandon the run. A bare Enter means abort — a reflex-approved
+prompt protects nobody.
+
+Headless (`SHADOW_HEADLESS`): `deny` (default) · `allow` (trusted automation
+only) · `error` (fail a pipeline loudly). A question nobody can answer is not
+a safety mechanism, so the wall never silently proceeds because the prompt
+could not be displayed.
+
+### The Skill Forge
+
+A run that executed at least one step and succeeded gets abstracted into
+`.shadow/skills/<name>/SKILL.md` — markdown with frontmatter, so the same file
+is loadable, greppable, diffable, and hand-editable. Repeating a known
+procedure reinforces it rather than duplicating it; a failure on a known skill
+lowers its confidence. Skills surface to the Monarch's recall engine.
+
+Honest scope: this is abstraction by **recording**, not generalisation. A
+forged skill is a replayable recipe, not transferable understanding.
+
 ### Authentication
 
 `shadow auth` never crashes on a machine that lacks credentials, and never
@@ -120,6 +175,8 @@ Everything the framework remembers lives in `.shadow/` at the project root:
   journal.jsonl    append-only event log; the audit trail
   sessions/        one record per run
   snapshots/       pre-mutation file copies, each with a manifest
+  checkpoints.git/ the out-of-band checkpoint repository
+  skills/          forged procedures, one SKILL.md each
 ```
 
 Two rules govern it. **Append, never overwrite** — an interrupted run leaves a
@@ -150,7 +207,8 @@ work, `xhigh` for long agentic runs, `max` when correctness outranks cost.
 Thinking is adaptive: the model decides when and how deeply to reason.
 
 Environment overrides: `SHADOW_MODEL`, `SHADOW_EFFORT`, `SHADOW_WIDTH`,
-`SHADOW_TIMEOUT`, `SHADOW_ASCII`, `SHADOW_NO_COLOR`, `NO_COLOR`, `FORCE_COLOR`.
+`SHADOW_TIMEOUT`, `SHADOW_SHELL`, `SHADOW_HOME`, `SHADOW_HEADLESS`,
+`SHADOW_PARANOID`, `SHADOW_ASCII`, `SHADOW_NO_COLOR`, `NO_COLOR`, `FORCE_COLOR`.
 
 **Credentials are never written to disk by this framework.** The API key is
 read from the environment or from the SDK's own credential store.
@@ -202,13 +260,17 @@ derivation, is in [NOTICE.md](NOTICE.md).
 | [EverMind-AI/Raven](https://github.com/EverMind-AI/Raven) | Apache-2.0 | Out-of-band shadow-git checkpoints · unwrap-before-classify shell policy · transient-vs-hard failure streaks |
 | [EverMind-AI/EverOS](https://github.com/EverMind-AI/EverOS) | Apache-2.0 | Single path-safety primitive · lock-wait reasoning (implementation rewritten — theirs is POSIX-only) |
 | [dolthub/dolt](https://github.com/dolthub/dolt) | Apache-2.0 | Reflog semantics: history alone is not recoverability |
+| [lsdefine/GenericAgent](https://github.com/lsdefine/GenericAgent) | MIT | `StepOutcome` contract · phase hooks · bounded turns · streamed progress |
+| [aiming-lab/AutoResearchClaw](https://github.com/aiming-lab/AutoResearchClaw) | MIT | Research as a pipeline stage · markdown `SKILL.md` format |
 | [666ghj/MiroFish](https://github.com/666ghj/MiroFish) | **AGPL-3.0** | Read only — backoff-with-jitter written independently |
 | [MemoriLabs/Memori](https://github.com/MemoriLabs/Memori) | **non-standard** | Read only — two-stage recall written independently |
+| [ANative-Lab/EvoAgentX](https://github.com/ANative-Lab/EvoAgentX) | **non-standard** | Read only — self-evolution framing, no code derived |
+| CORAL | *not found* | No such repository was located; the permission protocol is implemented from the directive |
 
 ## Development
 
 ```bash
-python -m unittest discover -s tests -v     # 63 tests
+python -m unittest discover -s tests -v     # 98 tests
 ruff check shadow_agent
 ```
 

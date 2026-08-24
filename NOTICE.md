@@ -38,6 +38,21 @@ Apache License 2.0.
 |---|---|---|
 | `dolt reflog` | `shadow_agent/architect/shadowgit.py` | The insight that a commit history is only half of recoverability: a reset makes commits unreachable from `log` while the reflog still addresses them. `ShadowGit.reflog()` and the unconditional pre-restore checkpoint exist because of this. |
 
+### lsdefine/GenericAgent — https://github.com/lsdefine/GenericAgent
+MIT.
+
+| Their file | Our module | What was taken |
+|---|---|---|
+| `agent_loop.py` | `shadow_agent/loop/core.py` | The `StepOutcome(data, next_prompt, should_exit)` contract; hook points around every phase; a hard turn bound; and generator-yielded progress, so a long run is observably working rather than indistinguishable from a hang. |
+
+### aiming-lab/AutoResearchClaw — https://github.com/aiming-lab/AutoResearchClaw
+MIT.
+
+| Their pattern | Our module | What was taken |
+|---|---|---|
+| `.claude/skills/<name>/SKILL.md` | `shadow_agent/architect/skills.py` | Skills as markdown with frontmatter — loadable, greppable, diffable, hand-editable. A skill a human cannot read is a skill nobody can audit. |
+| Research as a pipeline stage | `shadow_agent/monarch/research.py` | Gathering and synthesis happen *before* execution is handed anything, rather than as a tool the executor calls. |
+
 ---
 
 ## Read for design only — no derivation
@@ -64,6 +79,19 @@ shape — wide candidate generation, then narrow reranking, scoped by entity.
 That shape is standard information-retrieval practice and predates any single
 implementation. `shadow_agent/monarch/recall.py` is written from scratch. No
 Memori code is present in this repository.
+
+### ANative-Lab/EvoAgentX — https://github.com/ANative-Lab/EvoAgentX
+**Non-standard licence** (`NOASSERTION`); terms cannot be assumed compatible.
+
+Read for the self-evolution framing — that an agent should abstract solved
+problems into reusable capability. `shadow_agent/architect/skills.py` is
+written from scratch. No EvoAgentX code is present in this repository.
+
+### CORAL — not found
+No repository by that name was located during the assimilation pass. The
+permission-wall protocol in `shadow_agent/eminence/coral.py` is implemented
+from the specification given in the project directive, not extracted from a
+source project. The name is retained because the directive uses it.
 
 ---
 
