@@ -1,0 +1,6 @@
+# Normalise to LF in the repository. Without this, a Windows checkout commits
+# CRLF and every clone on another platform shows the whole tree as modified.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary

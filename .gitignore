@@ -1,0 +1,42 @@
+# --- Shadow Agent runtime state ---------------------------------------------
+# Machine-local. Contains the journal, durable memory, and the out-of-band
+# checkpoint repository. None of it belongs on a remote.
+.shadow/
+
+# --- Credentials ------------------------------------------------------------
+# The local credential store lives in ~/.shadow-agent/, outside this tree, so
+# it cannot be swept in by a wildcard add. These are belt-and-braces.
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# --- Tooling caches ---------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Editors / OS -----------------------------------------------------------
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.tmp
+*.shadow-tmp

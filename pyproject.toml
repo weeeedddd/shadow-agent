@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shadow-agent"
+version = "0.1.0"
+description = "A local, terminal-based LLM harness. Monarch analyses, Eminence executes, Architect versions."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["llm", "agent", "cli", "terminal", "harness", "claude"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Build Tools",
+]
+
+# The core framework has zero runtime dependencies on purpose. Onboarding,
+# state, journalling, snapshots, rollback, and the whole interface run on the
+# standard library alone. The SDK is only needed once you attach a reasoning
+# core, so it lives in an extra rather than in the base install.
+dependencies = []
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.40"]
+dev = ["pytest>=7", "ruff>=0.5"]
+
+[project.scripts]
+shadow = "shadow_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["shadow_agent*"]
+
+[tool.ruff]
+line-length = 108
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
