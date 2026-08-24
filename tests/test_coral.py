@@ -36,17 +36,38 @@ class TestExitQuality(unittest.TestCase):
         self.assertIs(classify_exit(-9, 5.0, "killed"), ExitQuality.SESSION_ERROR)
         self.assertIs(classify_exit(None, 5.0, ""), ExitQuality.SESSION_ERROR)
 
+    def test_fast_silent_success_is_still_success(self):
+        """`mkdir`, `touch`, and `cd` all exit 0 instantly with no output.
+
+        CORAL's timing heuristic is written for long-running agent
+        subprocesses. Applied to ordinary shell commands it is simply wrong,
+        and would fill the interface with "did it do anything?" warnings about
+        commands that did exactly what was asked.
+        """
+        self.assertIs(classify_exit(0, 0.0001, ""), ExitQuality.CLEAN)
+        self.assertIs(classify_exit(0, 0.0, "   "), ExitQuality.CLEAN)
+        self.assertIs(classify_exit(0, None, ""), ExitQuality.CLEAN)
+
     def test_exit_zero_with_output_is_clean_even_when_instant(self):
-        """Evidence of work outranks the timing heuristic."""
         self.assertIs(classify_exit(0, 0.0001, "result: 42"), ExitQuality.CLEAN)
 
     def test_exit_zero_after_real_work_is_clean(self):
         self.assertIs(classify_exit(0, 3.5, ""), ExitQuality.CLEAN)
 
-    def test_exit_zero_instant_and_silent_is_not_success(self):
-        """The gap CORAL exposed: exit 0 is not the same as success."""
-        self.assertIs(classify_exit(0, 0.0001, ""), ExitQuality.NO_RESULT)
-        self.assertIs(classify_exit(0, 0.0, "   "), ExitQuality.NO_RESULT)
+    def test_no_result_requires_an_explicit_output_contract(self):
+        """The heuristic survives, opt-in, for processes that owe a result."""
+        self.assertIs(
+            classify_exit(0, 0.0001, "", expects_output=True), ExitQuality.NO_RESULT
+        )
+        self.assertIs(
+            classify_exit(0, 0.0, "   ", expects_output=True), ExitQuality.NO_RESULT
+        )
+
+    def test_output_contract_satisfied_by_output_or_by_runtime(self):
+        self.assertIs(
+            classify_exit(0, 0.0001, "done", expects_output=True), ExitQuality.CLEAN
+        )
+        self.assertIs(classify_exit(0, 9.0, "", expects_output=True), ExitQuality.CLEAN)
 
 
 class TestCircuitBreaker(unittest.TestCase):

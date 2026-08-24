@@ -10,5 +10,5 @@ Nothing in this package simulates work. Every value the interface prints is
 read from the machine it is running on.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["__version__"]

@@ -51,9 +51,12 @@ do, so it is the one thing it will not do.
 from __future__ import annotations
 
 import os
+import re
+import shlex
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
 from ..ui import ansi
@@ -88,6 +91,118 @@ class HeadlessPolicy(Enum):
     ERROR = "error"    # raise, so a pipeline fails loudly rather than skipping
 
 
+def _looks_like_path(token: str) -> bool:
+    """Heuristic: is this argument a filesystem path rather than a flag or value?
+
+    Deliberately narrow. Misclassifying a flag as a path would resolve it
+    against the cwd and produce a fingerprint that collides with something
+    else -- and a cache collision here means approving an action the operator
+    never saw.
+    """
+    if not token or token.startswith("-"):
+        return False
+    if "=" in token or token.startswith("$"):
+        return False
+    return (
+        "/" in token
+        or "\\" in token
+        or token in (".", "..")
+        or token.startswith("~")
+        or bool(re.match(r"^[A-Za-z]:", token))
+        or "." in token           # file.ext
+        or token.isidentifier()   # a bare directory name like `build`
+    )
+
+
+def canonicalize(command: str, cwd: str = "") -> str:
+    """Reduce a command to a stable identity for cache lookup.
+
+    Four normalisations, each collapsing a distinction that is cosmetic:
+
+    * **whitespace** -- ``rm  -rf   build`` and ``rm -rf build`` are one command.
+    * **paths** -- resolved to absolute form against ``cwd``, which folds away
+      trailing slashes, ``./`` prefixes, ``..`` segments, and relative-versus-
+      absolute spelling. This is what makes ``rm -rf build/`` and
+      ``rm -rf build`` the same approval.
+    * **case, on Windows only** -- ``BUILD`` and ``build`` name the same
+      directory there and different ones on POSIX, so ``os.path.normcase``
+      decides rather than a hardcoded rule.
+    * **combined short flags** -- ``-rf`` and ``-fr`` are the same flags.
+      Sorted only for a bare ``-[a-z]{2,}`` token: long flags and anything
+      carrying a value are left exactly as written.
+
+    Everything else is preserved verbatim. When the command cannot be lexed,
+    the raw whitespace-normalised string is returned -- an unparseable command
+    gets a *stricter* key, never a looser one.
+    """
+    normalized = " ".join((command or "").split())
+    if not normalized:
+        return ""
+
+    try:
+        tokens = shlex.split(normalized, posix=True)
+    except ValueError:
+        return normalized  # unlexable: fall back to exact match
+
+    base = Path(cwd) if cwd else Path.cwd()
+    out: List[str] = []
+    for index, token in enumerate(tokens):
+        if re.fullmatch(r"-[A-Za-z]{2,}", token):
+            out.append("-" + "".join(sorted(token[1:])))
+            continue
+        if _is_positional_verb(tokens, index):
+            # The program name, and the subcommand of a program that takes one.
+            # `rm` is not a file, and `git push` does not name a directory
+            # called `push`. Resolving either produces a key that is merely
+            # consistent rather than correct, and an unreadable one at that.
+            out.append(token)
+            continue
+        if _looks_like_path(token):
+            out.append(_canonical_path(token, base))
+            continue
+        out.append(token)
+    return " ".join(out)
+
+
+# Programs whose first argument is a subcommand, not a path.
+_SUBCOMMAND_PROGRAMS = frozenset(
+    {
+        "git", "npm", "yarn", "pnpm", "pip", "pip3", "cargo", "go", "docker",
+        "podman", "kubectl", "systemctl", "apt", "apt-get", "brew", "choco",
+        "gem", "bundle", "terraform", "tofu", "gh", "dotnet", "conda", "uv",
+        "poetry", "make", "mvn", "gradle", "helm", "aws", "gcloud", "az",
+    }
+)
+
+
+def _is_positional_verb(tokens: List[str], index: int) -> bool:
+    """True for the program name, or a subcommand that follows one."""
+    if index == 0:
+        return True
+    if index == 1:
+        program = tokens[0].rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower()
+        return program in _SUBCOMMAND_PROGRAMS and not tokens[1].startswith("-")
+    return False
+
+
+def _canonical_path(token: str, base: Path) -> str:
+    """Absolute, symlink-resolved, case-normalised form of a path token.
+
+    ``strict=False`` matters: the path frequently does not exist yet (a file
+    about to be created, a directory about to be removed), and a resolver that
+    demanded existence would fall back to exact matching for exactly the
+    commands this cache is meant to help with.
+    """
+    try:
+        expanded = Path(token).expanduser()
+        resolved = expanded if expanded.is_absolute() else (base / expanded)
+        return os.path.normcase(str(resolved.resolve(strict=False)))
+    except (OSError, ValueError, RuntimeError):
+        # A path the OS refuses to parse — reserved name, bad drive, symlink
+        # loop. Keep the literal token; a stricter key is the safe failure.
+        return token
+
+
 @dataclass
 class Action:
     """One thing the Eminence intends to do, before it happens."""
@@ -103,11 +218,21 @@ class Action:
     def fingerprint(self) -> str:
         """Identity for session-scoped 'always allow'.
 
-        Includes the working directory: the same command is not the same
-        action in a different place. ``rm -rf build`` approved in a scratch
-        directory must not carry into the user's home.
+        Built from the *canonical* command, so a re-typed command that differs
+        only in spacing, a trailing slash, or flag order still matches an
+        approval the operator already gave.
+
+        The working directory stays in the key, resolved. The same command is
+        not the same action in a different place: ``rm -rf build`` approved in
+        a scratch directory must never carry into the user's home. Path
+        canonicalisation makes the *target* absolute, and the cwd term keeps
+        commands whose targets are not paths from leaking across directories.
         """
-        return f"{self.kind.value}\x1f{self.cwd}\x1f{self.target}"
+        try:
+            root = os.path.normcase(str(Path(self.cwd).resolve(strict=False))) if self.cwd else ""
+        except (OSError, ValueError, RuntimeError):
+            root = self.cwd
+        return f"{self.kind.value}\x1f{root}\x1f{canonicalize(self.target, self.cwd)}"
 
 
 class PermissionDenied(Exception):

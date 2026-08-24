@@ -224,6 +224,7 @@ class CoreLoop:
         planner: Optional[Planner] = None,
         hooks: Optional[Hooks] = None,
         max_steps: int = DEFAULT_MAX_STEPS,
+        dry_run: bool = False,
     ) -> None:
         self.config = config or Config()
         self.root = root
@@ -237,6 +238,7 @@ class CoreLoop:
         self.streak = StreakTracker()
         self.breaker = CircuitBreaker()
         self.max_steps = max_steps
+        self.dry_run = dry_run
 
     # --- the run -------------------------------------------------------------
 
@@ -433,6 +435,14 @@ class CoreLoop:
         already made the decision, and re-asking the executor's own gate would
         double-prompt for something the operator just approved.
         """
+        if self.dry_run:
+            # The wall still ran; only the execution is skipped. That ordering
+            # is deliberate -- a dry run should exercise the approval path,
+            # since that is the part worth rehearsing.
+            return StepOutcome(
+                data=ExecutionResult(command=step.command, returncode=0, stdout="[dry run — not executed]", duration=0.0),
+                ok=True,
+            )
         try:
             execution = self.eminence.run(step.command, allow_destructive=True)
         except EminenceError as exc:

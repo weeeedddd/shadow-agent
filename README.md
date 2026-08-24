@@ -63,6 +63,9 @@ Or run without installing:
 python main.py                  boot, authenticate, idle
 python main.py "your request"   boot and run one request through the loop
 python main.py --no-auth        boot without touching credentials
+python main.py --dry-run "…"    plan and gate, execute nothing
+python main.py --heuristic "…"  force the offline stub planner
+python arena.py                 live test of the permission wall
 ```
 
 ### The core loop
@@ -76,10 +79,34 @@ Bounded by `max_steps` and by a failure-streak breaker. `CoreLoop.stream()`
 yields an event per phase so the terminal renders progress live rather than
 freezing until the run ends.
 
-The planner is pluggable. The default is heuristic and maps a small set of
-recognisable requests to commands — **it does not invent shell commands from
-prose; that needs the reasoning core.** Everything else in the loop is real
-and runs offline today.
+The planner is pluggable and chosen at boot:
+
+| Condition | Planner |
+|---|---|
+| credential resolved + SDK installed | `ReasoningPlanner` — Claude Opus 5 |
+| no credential, or no SDK | `HeuristicPlanner` — six recognised phrases |
+| `--heuristic` | forced stub, for offline work |
+
+The boot panel names which one is active. Degrading silently would let the
+framework look like it was reasoning when it was pattern-matching.
+
+### Closing the evolution loop
+
+Before the Monarch calls the API, it queries the Skill Forge:
+
+```
+recall → confident match?  → apply the skill directly, no API call
+       → weak match?       → inject as prior art the model may reject
+       → no match?         → reason from scratch
+```
+
+A direct hit requires **relevance ≥ 1.6, confidence ≥ 75%, and at least two
+prior uses**. Below that bar a skill is offered as a suggestion, not applied —
+a wrong skill executed without review is worse than an API call, because the
+permission wall becomes the only thing between a bad recall and a bad outcome.
+
+This is what makes the framework get *faster*, not just more knowledgeable. A
+forge that only writes skills is a diary.
 
 ### The CORAL permission wall
 
@@ -95,6 +122,11 @@ from the Eminence to the OS that bypasses it.
 Answers: `y` once · `a` always (this exact command **in this directory**) ·
 `n` abort · `q` abandon the run. A bare Enter means abort — a reflex-approved
 prompt protects nobody.
+
+The `always` cache canonicalises before matching: paths resolved to absolute
+form, whitespace collapsed, combined short flags sorted. Approve `rm -rf build/`
+and `rm -rf build`, `rm  -fr  ./build`, and `rm -rf build/../build` are all
+covered — while `rm -rf dist` and a different directory still ask.
 
 > The module is named `coral.py` after this project's directive terminology.
 > It is **not** derived from [Human-Agent-Society/CORAL](https://github.com/Human-Agent-Society/CORAL),
@@ -275,7 +307,7 @@ derivation, is in [NOTICE.md](NOTICE.md).
 ## Development
 
 ```bash
-python -m unittest discover -s tests -v     # 118 tests
+python -m unittest discover -s tests -v     # 158 tests
 ruff check shadow_agent
 ```
 

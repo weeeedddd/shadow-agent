@@ -57,22 +57,31 @@ DEFAULT_BURST_THRESHOLD = 4
 class ExitQuality(Enum):
     """How much to believe an exit code.
 
-    CORAL's insight, and the gap it exposed here: **exit 0 is not the same as
-    success.** A process that exits 0 in a millisecond, having produced no
-    output, almost certainly did nothing -- a missing binary swallowed by a
-    shell, a no-op guard, a command that silently skipped its own work. This
-    framework previously counted every zero exit as a clean success, which
-    meant a run could report "1 executed, 0 failed" while accomplishing
-    nothing at all.
+    CORAL's ``exit_classifier`` draws this distinction for **long-running agent
+    subprocesses**, where an instant exit with no terminal marker really does
+    mean the agent produced nothing. Ported here verbatim, it was wrong:
 
-    The distinction also protects the circuit breaker from the opposite error.
-    Only ``NO_RESULT`` and ``SESSION_ERROR`` count toward a crash burst; a
-    ``CLEAN`` exit must never increment it, or a run of legitimate quick
-    completions trips the breaker and stops a working agent.
+        mkdir build     exit 0 · no output · 0.001s
+        touch file      exit 0 · no output · 0.001s
+        cd /tmp         exit 0 · no output · 0.000s
+
+    Every one of those is an unqualified success, and flagging them
+    ``NO_RESULT`` would fill the interface with "did it do anything?" warnings
+    about commands that did exactly what they were asked. **Fast success is
+    still success.**
+
+    So the timing heuristic is now opt-in, gated on ``expects_output``. It
+    applies where CORAL applied it -- a process contracted to emit a result --
+    and never to an ordinary shell command, where silence is the normal case.
+
+    The circuit-breaker rule is unchanged and still load-bearing: only
+    ``NO_RESULT`` and ``SESSION_ERROR`` count toward a burst. A ``CLEAN`` exit
+    must never increment it, or a run of legitimate quick completions trips a
+    mechanism meant to catch a crash loop.
     """
 
-    CLEAN = "clean"                  # exit 0, ran long enough, produced something
-    NO_RESULT = "no_result"          # exit 0 but instant and silent: suspect
+    CLEAN = "clean"                  # exit 0 — the default reading
+    NO_RESULT = "no_result"          # contracted to produce a result, produced none
     SESSION_ERROR = "session_error"  # non-zero, timeout, or refusal
 
 
@@ -81,16 +90,22 @@ def classify_exit(
     duration: Optional[float] = None,
     output: str = "",
     min_clean_runtime: float = MIN_CLEAN_RUNTIME_SECONDS,
+    expects_output: bool = False,
 ) -> ExitQuality:
     """Judge the quality of a completed execution.
 
-    Conservative by design: ``CLEAN`` requires exit 0 **and** evidence of work
-    -- either output, or enough elapsed time to believe something happened.
-    Evidence of output outranks the timing heuristic, because a genuinely fast
-    command that printed a result did its job.
+    ``exit_code == 0`` reads as :attr:`ExitQuality.CLEAN` unless the caller
+    passes ``expects_output=True`` to say this particular process was
+    contracted to produce something. That flag is for agent runtimes and
+    result-emitting tools -- not for shell commands, where a silent instant
+    return is how success normally looks.
     """
     if exit_code is None or exit_code != 0:
         return ExitQuality.SESSION_ERROR
+
+    if not expects_output:
+        return ExitQuality.CLEAN
+
     if output and output.strip():
         return ExitQuality.CLEAN
     if duration is not None and duration >= min_clean_runtime:

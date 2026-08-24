@@ -41,7 +41,8 @@ from shadow_agent.auth.store import CredentialStore
 from shadow_agent.config import load_config
 from shadow_agent.core import context
 from shadow_agent.eminence.coral import PermissionWall
-from shadow_agent.loop.core import CoreLoop, Phase
+from shadow_agent.loop.core import CoreLoop, HeuristicPlanner, Phase
+from shadow_agent.monarch.planner import build_planner
 from shadow_agent.ui import ansi, onboarding
 from shadow_agent.ui.implementory import Implementory, Status
 from shadow_agent.ui.render import kv_rows, pad, panel, resolve_width, wrap
@@ -124,8 +125,8 @@ def stage_auth(width: int, skip: bool):
     return run_wizard(width=width, store=store)
 
 
-def stage_pipeline(root: Path, config, width: int):
-    """Initialise the three tiers and the permission wall."""
+def stage_pipeline(root: Path, config, width: int, args=None, credential=None):
+    """Initialise the three tiers, the permission wall, and the planner."""
     store = StateStore(root)
     if not store.initialized:
         store.initialize(config=config)
@@ -134,12 +135,30 @@ def stage_pipeline(root: Path, config, width: int):
     shadowgit.initialize()
 
     forge = SkillForge(store.dir)
+
     wall = PermissionWall.from_env(width=width)
-    loop = CoreLoop(root, config=config, wall=wall)
-    return store, shadowgit, forge, wall, loop
+    if args is not None and getattr(args, "mock_tty", False):
+        # Forces the wall to treat this session as answerable. For rehearsing
+        # the approval path through a pipe; the default probes stdin, which is
+        # what correctly detects a real terminal.
+        wall.assume_interactive = True
+
+    if args is not None and getattr(args, "heuristic", False):
+        planner, planner_label = HeuristicPlanner(), "heuristic (forced by --heuristic)"
+    else:
+        planner, planner_label = build_planner(root, config, credential, forge)
+
+    loop = CoreLoop(
+        root,
+        config=config,
+        wall=wall,
+        planner=planner,
+        dry_run=bool(args is not None and getattr(args, "dry_run", False)),
+    )
+    return store, shadowgit, forge, wall, loop, planner_label
 
 
-def render_pipeline(state, store, shadowgit, forge, wall, credential, config, width: int) -> None:
+def render_pipeline(state, store, shadowgit, forge, wall, credential, config, width: int, planner_label: str = "") -> None:
     g = glyphs()
     inner = width - 6
     skills = forge.all()
@@ -147,7 +166,7 @@ def render_pipeline(state, store, shadowgit, forge, wall, credential, config, wi
 
     rows = kv_rows(
         [
-            ("MONARCH", f"ready · scan depth {config.context_scan_depth}"),
+            ("MONARCH", planner_label or f"ready · scan depth {config.context_scan_depth}"),
             ("EMINENCE", f"ready · timeout {config.execution.timeout_seconds:.0f}s"),
             ("ARCHITECT", f"ready · {len(checkpoints)} checkpoints · {len(skills)} skills"),
             ("WALL", f"{wall.headless.value} when headless" + (" · paranoid" if wall.paranoid else "")),
@@ -211,6 +230,21 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="main.py", description="Shadow Agent — boot.")
     parser.add_argument("request", nargs="*", help="a request to run through the loop")
     parser.add_argument("--no-auth", action="store_true", help="skip credential resolution")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="plan and gate, but execute nothing (the wall still runs)",
+    )
+    parser.add_argument(
+        "--mock-tty",
+        action="store_true",
+        help="treat this session as answerable even without a TTY (testing only)",
+    )
+    parser.add_argument(
+        "--heuristic",
+        action="store_true",
+        help="force the offline stub planner instead of the reasoning core",
+    )
     parser.add_argument("--no-color", action="store_true")
     parser.add_argument("--width", type=int)
     parser.add_argument("--version", action="version", version=f"shadow-agent {__version__}")
@@ -231,9 +265,9 @@ def main(argv=None) -> int:
     credential = stage_auth(width, skip=args.no_auth)
 
     # 3 — the pipeline
-    store, shadowgit, forge, wall, loop = stage_pipeline(root, config, width)
+    store, shadowgit, forge, wall, loop, planner_label = stage_pipeline(root, config, width, args, credential)
     state = context.collect(cwd=root, state_dir=store.dir)
-    render_pipeline(state, store, shadowgit, forge, wall, credential, config, width)
+    render_pipeline(state, store, shadowgit, forge, wall, credential, config, width, planner_label)
 
     # 4 — the loop
     request = " ".join(args.request).strip()
@@ -285,7 +319,20 @@ def main(argv=None) -> int:
     if not credential.present:
         impl.unresolved("No credential resolved — the reasoning core is unreachable.")
 
+    planner_source = getattr(loop.planner, "last_source", None)
+    if planner_source is not None and planner_source.kind == "skill":
+        impl.build(f"Reused remembered skill '{planner_source.skill}' — no API call was made.")
+    elif planner_source is not None and planner_source.kind == "reasoning-core":
+        impl.build(f"Planned by the reasoning core ({planner_source.summary()}).")
+    elif planner_source is not None and planner_source.error:
+        impl.degrade(Status.PARTIAL)
+        impl.limit(f"The reasoning core failed: {planner_source.error}")
+    if args.dry_run:
+        impl.degrade(Status.PARTIAL)
+        impl.limit("Dry run: the wall ran, but nothing was executed.")
+
     impl.how(
+        f"Monarch: planner = {planner_label}.",
         "Monarch: scanned the working directory, classified intent, assessed risk.",
         "CORAL wall: every step classified and gated before reaching the OS.",
         "Eminence: executed approved steps with timeout and output caps.",
